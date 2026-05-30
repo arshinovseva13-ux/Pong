@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Понг + Арканоид | Мультирежим</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background: #0a0f1a;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+            touch-action: none;
+            padding: 12px;
+        }
+
+        .game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            max-width: 500px;
+        }
+
+        canvas {
+            display: block;
+            margin: 0 auto;
+            background: #0e121f;
+            border-radius: 28px;
+            box-shadow: 0 20px 35px rgba(0,0,0,0.5);
+            width: 100%;
+            height: auto;
+            cursor: pointer;
+        }
+
+        .menu-panel {
+            background: rgba(20, 28, 40, 0.9);
+            backdrop-filter: blur(12px);
+            border-radius: 48px;
+            padding: 12px 16px;
+            margin-top: 16px;
+            width: 100%;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .mode-btn, .difficulty-btn {
+            background: #2a3346;
+            border: none;
+            color: white;
+            padding: 8px 18px;
+            border-radius: 40px;
+            font-weight: bold;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: 0.1s;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+
+        .mode-btn.active, .difficulty-btn.active {
+            background: #f5a623;
+            color: #1e1a0c;
+            box-shadow: 0 0 8px #ffb347;
+        }
+
+        .reset-btn {
+            background: #d64531;
+            padding: 8px 22px;
+            border-radius: 40px;
+            font-weight: bold;
+            border: none;
+            color: white;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            margin-top: 12px;
+            background: rgba(0,0,0,0.5);
+            border-radius: 60px;
+            padding: 8px 20px;
+            color: white;
+            font-weight: bold;
+        }
+
+        .score-box {
+            text-align: center;
+        }
+
+        .timer-box {
+            background: #1e2a36;
+            padding: 4px 14px;
+            border-radius: 60px;
+            font-family: monospace;
+            font-size: 1.2rem;
+        }
+
+        @media (max-width: 550px) {
+            .mode-btn, .difficulty-btn { padding: 6px 12px; font-size: 0.7rem; }
+            .info-row { font-size: 0.8rem; }
+        }
+    </style>
+</head>
+<body>
+<div class="game-container">
+    <canvas id="gameCanvas" width="400" height="550"></canvas>
+    
+    <div class="menu-panel">
+        <button class="mode-btn" data-mode="classic">🏓 Классика</button>
+        <button class="mode-btn" data-mode="blocks">🧱 Арканоид</button>
+        <button class="reset-btn" id="resetGameBtn">⟳ Новая игра</button>
+    </div>
+    
+    <div class="menu-panel">
+        <button class="difficulty-btn" data-diff="easy">🍃 Лёгкий</button>
+        <button class="difficulty-btn" data-diff="medium">🌙 Средний</button>
+        <button class="difficulty-btn" data-diff="hard">🔥 Сложный</button>
+        <button class="difficulty-btn" data-diff="impossible">💀 Невозможный</button>
+    </div>
+    
+    <div class="info-row">
+        <div class="score-box">🎯 Счёт: <span id="scoreValue">0</span></div>
+        <div class="score-box">💀 Жизни: <span id="livesValue">3</span></div>
+        <div class="timer-box">⏱️ <span id="timerValue">0.0</span>с</div>
+    </div>
+    <div style="font-size: 11px; margin-top: 8px; color: #8aa; text-align: center;">👇 Палец влево/вправо — двигай ракетку</div>
+</div>
+
+<script>
+    (function(){
+        // -------- ХОЛСТ ----------
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const W = 400, H = 550;
+        canvas.width = W; canvas.height = H;
+        
+        // -------- ИГРОВЫЕ ПАРАМЕТРЫ ----------
+        let currentMode = "classic";     // classic, blocks
+        let currentDifficulty = "medium"; // easy, medium, hard, impossible
+        
+        // общие
+        let paddleX = (W - 80)/2;
+        const PADDLE_W = 80;
+        const PADDLE_H = 12;
+        let ballX = W/2, ballY = H-60;
+        let ballDX = 1.8, ballDY = -2.4;
+        const BALL_R = 6;
+        
+        let score = 0;
+        let lives = 3;
+        let gameActive = true;
+        let winFlag = false;
+        let gameLoopId = null;
+        
+        // таймер для невозможного режима (нужно продержаться)
+        let startTime = 0;
+        let currentTimer = 0;
+        let impossibleSurvival = false;
+        let targetSurvivalTime = 12.0;   // 12 секунд для победы на невозможном
+        
+        // режим блоков
+        let blocks = [];
+        let blockRows = 3;
+        let blockCols = 7;
+        let blockGap = 4;
+        
+        // настройки AI (для classic)
+        let aiPaddleX = (W - PADDLE_W)/2;
+        let aiSpeed = 3;
+        
+        // дополнительные переменные для "невозможного" уровня (AI почти бог)
+        // + настройки сложности
+        function applyDifficulty() {
+            if(currentMode === "classic") {
+                switch(currentDifficulty) {
+                    case "easy": aiSpeed = 1.9; ballDX = 1.4; ballDY = -2.0; break;
+                    case "medium": aiSpeed = 3.0; ballDX = 1.8; ballDY = -2.3; break;
+                    case "hard": aiSpeed = 4.8; ballDX = 2.4; ballDY = -2.8; break;
+                    case "impossible": aiSpeed = 7.2; ballDX = 3.0; ballDY = -3.2; break;
+                }
+            }
+            if(currentMode === "blocks") {
+                // сложность влияет на скорость мяча + кол-во жизней
+                switch(currentDifficulty) {
+                    case "easy": ballDX = 1.5; ballDY = -2.0; lives = 5; break;
+                    case "medium": ballDX = 1.9; ballDY = -2.4; lives = 3; break;
+                    case "hard": ballDX = 2.5; ballDY = -2.9; lives = 2; break;
+                    case "impossible": ballDX = 3.4; ballDY = -3.4; lives = 1; break;
+                }
+                updateUI();
+            }
+        }
+        
+        // создание блоков (арканоид)
+        function buildBlocks() {
+            blocks = [];
+            let blockW = (W - (blockCols+1)*blockGap) / blockCols;
+            for(let row = 0; row < blockRows; row++) {
+                for(let col = 0; col < blockCols; col++) {
+                    let x = blockGap + col * (blockW + blockGap);
+                    let y = 35 + row * (18 + blockGap);
+                    let colors = ["#ff7b72","#ffd966","#6bcb77","#4d9de0","#c084fc"];
+                    blocks.push({
+                        x: x, y: y, w: blockW, h: 14,
+                        active: true,
+                        color: colors[row % colors.length]
+                    });
+                }
+            }
+        }
+        
+        // сброс игры полностью
+        function fullReset() {
+            gameActive = true;
+            winFlag = false;
+            impossibleSurvival = false;
+            score = 0;
+            if(currentMode === "blocks") {
+                if(currentDifficulty === "easy") lives = 5;
+                else if(currentDifficulty === "medium") lives = 3;
+                else if(currentDifficulty === "hard") lives = 2;
+                else lives = 1;
+                buildBlocks();
+            } else {
+                lives = 3;
+            }
+            paddleX = (W - PADDLE_W)/2;
+            aiPaddleX = (W - PADDLE_W)/2;
+            ballX = W/2;
+            ballY = H - 50;
+            ballDX = Math.abs(ballDX) * (Math.random() > 0.5 ? 1 : -1);
+            if(currentMode === "classic") ballDY = -Math.abs(ballDY);
+            else ballDY = -Math.abs(ballDY);
+            
+            // таймер невозможного режима
+            startTime = performance.now() / 1000;
+            currentTimer = 0;
+            if(currentDifficulty === "impossible") {
+                impossibleSurvival = true;
+            } else {
+                impossibleSurvival = false;
+            }
+            updateUI();
+        }
+        
+        function updateUI() {
+            document.getElementById('scoreValue').innerText = score;
+            document.getElementById('livesValue').innerText = lives;
+            let timerShow = currentTimer.toFixed(1);
+            if(currentDifficulty === "impossible" && !winFlag && gameActive) timerShow = currentTimer.toFixed(1);
+            else if(winFlag && currentDifficulty === "impossible") timerShow = "✓ ВЫЖИЛ";
+            document.getElementById('timerValue').innerText = timerShow;
+        }
+        
+        // логика режима classic (с AI)
+        function updateClassic() {
+            if(!gameActive) return;
+            // таймер для невозможного (победа по времени)
+            if(impossibleSurvival && !winFlag) {
+                let now = performance.now() / 1000;
+                currentTimer = now - startTime;
+                updateUI();
+                if(currentTimer >= targetSurvivalTime) {
+                    // победа в невозможном режиме
+                    gameActive = false;
+                    winFlag = true;
+                    return;
+                }
+            }
+            
+            // движение мяча
+            ballX += ballDX;
+            ballY += ballDY;
+            
+            // стены
+            if(ballX - BALL_R <= 0) { ballX = BALL_R; ballDX = -ballDX; }
+            if(ballX + BALL_R >= W) { ballX = W - BALL_R; ballDX = -ballDX; }
+            if(ballY - BALL_R <= 0) { ballY = BALL_R; ballDY = -ballDY; }
+            
+            // пропуск снизу (потеря жизни)
+            if(ballY + BALL_R >= H) {
+                lives--;
+                updateUI();
+                if(lives <= 0) {
+                    gameActive = false;
+                    winFlag = false;
+                    return;
+                } else {
+                    ballX = W/2; ballY = H - 45;
+                    ballDX = (Math.random() > 0.5 ? 1.6 : -1.6) * (ballDX > 0 ? 1 : -1);
+                    ballDY = -Math.abs(ballDY);
+                    paddleX = (W - PADDLE_W)/2;
+                }
+                return;
+            }
+            
+            // ракетка игрока
+            if(ballDY > 0 && ballY + BALL_R >= H - PADDLE_H && ballY - BALL_R < H - PADDLE_H + Math.abs(ballDY)) {
+                if(ballX + BALL_R >= paddleX && ballX - BALL_R <= paddleX + PADDLE_W) {
+                    let hitPos = (ballX - paddleX) / PADDLE_W;
+                    let angle = (hitPos - 0.5) * 1.4;
+                    let speed = Math.hypot(ballDX, ballDY);
+                    let newDirX = Math.sin(angle);
+                    let newDirY = -Math.cos(angle);
+                    let len = Math.hypot(newDirX, newDirY);
+                    newDirX /= len; newDirY /= len;
+                    ballDX = newDirX * speed;
+                    ballDY = newDirY * speed;
+                    if(Math.abs(ballDX) < 1) ballDX = ballDX > 0 ? 1.2 : -1.2;
+                    ballY = H - PADDLE_H - BALL_R;
+                }
+            }
+            
+            // AI ракетка (верхняя) – в классике AI против игрока
+            if(ballDY < 0 && ballY - BALL_R <= PADDLE_H && ballY + BALL_R > PADDLE_H) {
+                if(ballX + BALL_R >= aiPaddleX && ballX - BALL_R <= aiPaddleX + PADDLE_W) {
+                    let hitPos = (ballX - aiPaddleX) / PADDLE_W;
+                    let angle = (hitPos - 0.5) * 1.3;
+                    let speed = Math.hypot(ballDX, ballDY);
+                    let newDirX = Math.sin(angle);
+                    let newDirY = Math.cos(angle);
+                    let len = Math.hypot(newDirX, newDirY);
+                    newDirX /= len; newDirY /= len;
+                    ballDX = newDirX * speed;
+                    ballDY = newDirY * speed;
+                    if(Math.abs(ballDX) < 1) ballDX = ballDX > 0 ? 1.2 : -1.2;
+                    ballY = PADDLE_H + BALL_R;
+                }
+            }
+            
+            // Движение AI (сложность)
+            let targetX = ballX - PADDLE_W/2;
+            targetX = Math.min(Math.max(targetX, 0), W - PADDLE_W);
+            if(aiPaddleX < targetX) aiPaddleX += aiSpeed;
+            else if(aiPaddleX > targetX) aiPaddleX -= aiSpeed;
+            aiPaddleX = Math.min(Math.max(aiPaddleX, 0), W - PADDLE_W);
+            
+            // ограничения игрока
+            paddleX = Math.min(Math.max(paddleX, 0), W - PADDLE_W);
+        }
+        
+        // режим арканоид (разрушать блоки)
+        function updateBlocks() {
+            if(!gameActive) return;
+            
+            if(impossibleSurvival && !winFlag) {
+                let now = performance.now() / 1000;
+                currentTimer = now - startTime;
+                updateUI();
+                if(currentTimer >= targetSurvivalTime) {
+                    gameActive = false;
+                    winFlag = true;
+                    return;
+                }
+            }
+            
+            ballX += ballDX;
+            ballY += ballDY;
+            
+            // стены
+            if(ballX - BALL_R <= 0) { ballX = BALL_R; ballDX = -ballDX; }
+            if(ballX + BALL_R >= W) { ballX = W - BALL_R; ballDX = -ballDX; }
+            if(ballY - BALL_R <= 0) { ballY = BALL_R; ballDY = -ballDY; }
+            
+            // потеря жизни
+            if(ballY + BALL_R >= H) {
+                lives--;
+                updateUI();
+                if(lives <= 0) {
+                    gameActive = false;
+                    winFlag = false;
+                    return;
+                } else {
+                    ballX = W/2; ballY = H - 50;
+                    ballDX = (Math.random() > 0.5 ? 1.5 : -1.5);
+                    ballDY = -Math.abs(ballDY);
+                    paddleX = (W - PADDLE_W)/2;
+                }
+                return;
+            }
+            
+            // ракетка
+            if(ballDY > 0 && ballY + BALL_R >= H - PADDLE_H && ballY - BALL_R < H - PADDLE_H + Math.abs(ballDY)) {
+                if(ballX + BALL_R >= paddleX && ballX - BALL_R <= paddleX + PADDLE_W) {
+                    let hitPos = (ballX - paddleX) / PADDLE_W;
+                    let angle = (hitPos - 0.5) * 1.5;
+                    let speed = Math.hypot(ballDX, ballDY);
+                    let ndx = Math.sin(angle);
+                    let ndy = -Math.cos(angle);
+                    let len = Math.hypot(ndx, ndy);
+                    ndx /= len; ndy /= len;
+                    ballDX = ndx * speed;
+                    ballDY = ndy * speed;
+                    if(Math.abs(ballDX) < 1) ballDX = ballDX > 0 ? 1.2 : -1.2;
+                    ballY = H - PADDLE_H - BALL_R;
+                }
+            }
+            
+            // блоки
+            let allCleared = true;
+            for(let i=0; i<blocks.length; i++) {
+                let b = blocks[i];
+                if(!b.active) continue;
+                allCleared = false;
+                // столкновение
+                if(ballX + BALL_R > b.x && ballX - BALL_R < b.x + b.w && ballY + BALL_R > b.y && ballY - BALL_R < b.y + b.h) {
+                    b.active = false;
+                    score++;
+                    updateUI();
+                    let overlapLeft = (ballX + BALL_R) - b.x;
+                    let overlapRight = (b.x + b.w) - (ballX - BALL_R);
+                    let overlapTop = (ballY + BALL_R) - b.y;
+                    let overlapBottom = (b.y + b.h) - (ballY - BALL_R);
+                    let min = Math.min(overlapLeft, overlapRight, overlapTop, overlapBottom);
+                    if(min === overlapLeft || min === overlapRight) ballDX = -ballDX;
+                    else ballDY = -ballDY;
+                    break;
+                }
+            }
+            if(allCleared && blocks.length > 0) {
+                gameActive = false;
+                winFlag = true;
+            }
+            
+            paddleX = Math.min(Math.max(paddleX, 0), W - PADDLE_W);
+        }
+        
+        // -------- ОТРИСОВКА ВСЕГО ----------
+        function draw() {
+            ctx.clearRect(0, 0, W, H);
+            // фон
+            ctx.fillStyle = "#0e121f";
+            ctx.fillRect(0,0,W,H);
+            
+            // ракетка игрока
+            ctx.fillStyle = "#4c9aff";
+            ctx.shadowBlur = 3;
+            ctx.fillRect(paddleX, H-PADDLE_H, PADDLE_W, PADDLE_H);
+            
+            if(currentMode === "classic") {
+                // AI ракетка
+                ctx.fillStyle = "#ff7e5e";
+                ctx.fillRect(aiPaddleX, 0, PADDLE_W, PADDLE_H);
+                ctx.fillStyle = "#ffb347";
+                ctx.font = "bold 12px monospace";
+                ctx.fillText("🤖 AI", aiPaddleX+5, 10);
+            }
+            
+            // мяч с эффектом
+            ctx.fillStyle = "#f9f3c1";
+            ctx.beginPath();
+            ctx.arc(ballX, ballY, BALL_R, 0, Math.PI*2);
+            ctx.fill();
+            ctx.fillStyle = "#ffffff";
+            ctx.beginPath();
+            ctx.arc(ballX-1.5, ballY-1.5, 2, 0, Math.PI*2);
+            ctx.fill();
+            
+            // блоки (арканоид)
+            if(currentMode === "blocks") {
+                for(let b of blocks) {
+                    if(!b.active) continue;
+                    ctx.fillStyle = b.color;
+                    ctx.fillRect(b.x, b.y, b.w, b.h);
+                    ctx.fillStyle = "#ffffff88";
+                    ctx.fillRect(b.x+2, b.y+2, b.w-4, 3);
+                }
+            }
+            
+            // разделительная линия
+            ctx.strokeStyle = "#2a3850";
+            ctx.setLineDash([6, 10]);
+            ctx.beginPath();
+            ctx.moveTo(0, H/2);
+            ctx.lineTo(W, H/2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            if(!gameActive) {
+                ctx.font = "bold 22px system-ui";
+                ctx.fillStyle = winFlag ? "#b9f6ca" : "#ffab91";
+                ctx.shadowBlur = 2;
+                let msg = winFlag ? "✨ ПОБЕДА! ✨" : "💀 ПОРАЖЕНИЕ 💀";
+                ctx.fillText(msg, W/2-70, H/2-40);
+                ctx.font = "12px monospace";
+                ctx.fillStyle = "#ccc";
+                ctx.fillText("Нажмите ⟳ Новая игра", W/2-90, H/2+30);
+            }
+            
+            if(currentDifficulty === "impossible" && gameActive && !winFlag) {
+                ctx.font = "bold 10px monospace";
+                ctx.fillStyle = "#ffaa66";
+                ctx.fillText(`Продержись ${Math.max(0, targetSurvivalTime - currentTimer).toFixed(1)}с`, W-85, 25);
+            }
+            ctx.shadowBlur = 0;
+        }
+        
+        // основной цикл
+        function gameUpdate() {
+            if(currentMode === "classic") updateClassic();
+            else updateBlocks();
+            draw();
+            requestAnimationFrame(gameUpdate);
+        }
+        
+        // обработка касаний
+        function handleTouch(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = W / rect.width;
+            let clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            let offsetX = clientX - rect.left;
+            offsetX = Math.min(Math.max(offsetX, 0), rect.width);
+            let canvasX = offsetX * scaleX;
+            let newX = canvasX - PADDLE_W/2;
+            paddleX = Math.min(Math.max(newX, 0), W - PADDLE_W);
+        }
+        
+        function initEvents() {
+            canvas.addEventListener('touchstart', handleTouch, {passive:false});
+            canvas.addEventListener('touchmove', handleTouch, {passive:false});
+            canvas.addEventListener('mousemove', (e) => {
+                if(e.buttons === 1 || true) {
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = W / rect.width;
+                    let mouseX = e.clientX - rect.left;
+                    mouseX = Math.min(Math.max(mouseX,0), rect.width);
+                    paddleX = Math.min(Math.max(mouseX * scaleX - PADDLE_W/2, 0), W - PADDLE_W);
+                }
+            });
+            canvas.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = W / rect.width;
+                let mouseX = e.clientX - rect.left;
+                mouseX = Math.min(Math.max(mouseX,0), rect.width);
+                paddleX = Math.min(Math.max(mouseX * scaleX - PADDLE_W/2, 0), W - PADDLE_W);
+            });
+        }
+        
+        // переключение режимов
+        function setMode(mode) {
+            currentMode = mode;
+            if(mode === "blocks") buildBlocks();
+            fullReset();
+            applyDifficulty();
+            updateUI();
+        }
+        
+        function setDifficulty(diff) {
+            currentDifficulty = diff;
+            fullReset();
+            applyDifficulty();
+            updateUI();
+        }
+        
+        // кнопки меню
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                setMode(btn.dataset.mode);
+            });
+        });
+        document.querySelectorAll('.difficulty-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                setDifficulty(btn.dataset.diff);
+            });
+        });
+        document.getElementById('resetGameBtn').addEventListener('click', () => {
+            fullReset();
+            applyDifficulty();
+        });
+        
+        // старт
+        setMode("classic");
+        setDifficulty("medium");
+        initEvents();
+        gameUpdate();
+    })();
+</script>
+</body>
+</html>
